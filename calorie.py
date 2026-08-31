@@ -170,8 +170,11 @@ class CalorieTrackerApp:
 
         self.overlay_image = None
         self.key_labels = {}
+        self.overlay_mode = False
 
         self._build_widgets()
+        self._layout_setup_mode()
+        self.root.bind("<Escape>", self._on_escape_key)
         self.apply_theme()
         self._tick()
 
@@ -224,16 +227,16 @@ class CalorieTrackerApp:
         )
         self.cool_text_label.pack(pady=(0, 8))
 
-        settings = tk.LabelFrame(self.main, text="Customization")
-        settings.pack(fill="x", padx=10, pady=6)
+        self.settings_frame = tk.LabelFrame(self.main, text="Customization")
+        self.settings_frame.pack(fill="x", padx=10, pady=6)
 
-        self._add_labeled_entry(settings, "Overlay title", self.title_text_var)
-        self._add_labeled_entry(settings, "Cool text", self.cool_text_var)
-        self._add_labeled_entry(settings, "Calories / key", self.cal_per_press_var)
-        self._add_labeled_entry(settings, "Tracked keys (comma)", self.keys_var)
-        self._add_labeled_entry(settings, "Image path", self.image_path_var)
+        self._add_labeled_entry(self.settings_frame, "Overlay title", self.title_text_var)
+        self._add_labeled_entry(self.settings_frame, "Cool text", self.cool_text_var)
+        self._add_labeled_entry(self.settings_frame, "Calories / key", self.cal_per_press_var)
+        self._add_labeled_entry(self.settings_frame, "Tracked keys (comma)", self.keys_var)
+        self._add_labeled_entry(self.settings_frame, "Image path", self.image_path_var)
 
-        image_controls = tk.Frame(settings)
+        image_controls = tk.Frame(self.settings_frame)
         image_controls.pack(fill="x", padx=6, pady=3)
         tk.Button(image_controls, text="Browse Image", command=self.browse_image).pack(
             side="left"
@@ -242,14 +245,14 @@ class CalorieTrackerApp:
             side="left", padx=6
         )
 
-        color_frame = tk.Frame(settings)
+        color_frame = tk.Frame(self.settings_frame)
         color_frame.pack(fill="x", padx=6, pady=4)
         self._add_color_input(color_frame, "BG", self.bg_color_var, 0)
         self._add_color_input(color_frame, "Panel", self.panel_color_var, 1)
         self._add_color_input(color_frame, "Accent", self.accent_color_var, 2)
         self._add_color_input(color_frame, "Text", self.text_color_var, 3)
 
-        toggle_frame = tk.Frame(settings)
+        toggle_frame = tk.Frame(self.settings_frame)
         toggle_frame.pack(fill="x", padx=6, pady=4)
         tk.Checkbutton(
             toggle_frame,
@@ -264,7 +267,7 @@ class CalorieTrackerApp:
             command=self.apply_window_flags,
         ).pack(side="left", padx=8)
 
-        alpha_frame = tk.Frame(settings)
+        alpha_frame = tk.Frame(self.settings_frame)
         alpha_frame.pack(fill="x", padx=6, pady=4)
         tk.Label(alpha_frame, text="Overlay opacity").pack(side="left")
         tk.Scale(
@@ -279,24 +282,24 @@ class CalorieTrackerApp:
         ).pack(side="left", padx=8)
 
         tk.Button(
-            settings,
+            self.settings_frame,
             text="Apply customization",
             command=self.apply_customization,
         ).pack(pady=5)
 
-        stats = tk.LabelFrame(self.main, text="Session Stats")
-        stats.pack(fill="x", padx=10, pady=6)
+        self.stats_frame = tk.LabelFrame(self.main, text="Session Stats")
+        self.stats_frame.pack(fill="x", padx=10, pady=6)
 
-        self.keys_stat_label = self._make_stat_row(stats, "Tracked keys")
-        self.total_label = self._make_stat_row(stats, "Total presses")
-        self.time_label = self._make_stat_row(stats, "Session time")
-        self.rate_label = self._make_stat_row(stats, "Presses / min")
+        self.keys_stat_label = self._make_stat_row(self.stats_frame, "Tracked keys")
+        self.total_label = self._make_stat_row(self.stats_frame, "Total presses")
+        self.time_label = self._make_stat_row(self.stats_frame, "Session time")
+        self.rate_label = self._make_stat_row(self.stats_frame, "Presses / min")
 
-        cal_frame = tk.Frame(self.main)
-        cal_frame.pack(pady=8)
+        self.cal_frame = tk.Frame(self.main)
+        self.cal_frame.pack(pady=8)
 
         self.cal_title = tk.Label(
-            cal_frame,
+            self.cal_frame,
             text="Calories burned",
             font=("Segoe UI", 11),
         )
@@ -304,17 +307,22 @@ class CalorieTrackerApp:
 
         self.calories_var = tk.StringVar(value="0.00")
         self.calories_label = tk.Label(
-            cal_frame,
+            self.cal_frame,
             textvariable=self.calories_var,
             font=("Segoe UI", 30, "bold"),
         )
         self.calories_label.pack()
 
-        btn_frame = tk.Frame(self.main)
-        btn_frame.pack(pady=8)
-        tk.Button(btn_frame, text="Start", command=self.start).grid(row=0, column=0, padx=4)
-        tk.Button(btn_frame, text="Pause", command=self.stop).grid(row=0, column=1, padx=4)
-        tk.Button(btn_frame, text="Reset", command=self.reset).grid(row=0, column=2, padx=4)
+        self.btn_frame = tk.Frame(self.main)
+        self.btn_frame.pack(pady=8)
+        tk.Button(self.btn_frame, text="Start", command=self.start).grid(row=0, column=0, padx=4)
+        tk.Button(self.btn_frame, text="Pause", command=self.stop).grid(row=0, column=1, padx=4)
+        tk.Button(self.btn_frame, text="Reset", command=self.reset).grid(row=0, column=2, padx=4)
+        tk.Button(
+            self.btn_frame,
+            text="Enter Overlay",
+            command=self.enter_overlay_mode,
+        ).grid(row=0, column=3, padx=4)
 
         self.status_var = tk.StringVar(value="Stopped")
         self.status_label = tk.Label(
@@ -323,6 +331,59 @@ class CalorieTrackerApp:
             font=("Segoe UI", 10, "italic"),
         )
         self.status_label.pack(pady=(2, 8))
+
+    def _layout_setup_mode(self):
+        self.overlay_mode = False
+        self._set_main_layout(show_setup=True)
+        self.apply_window_flags()
+
+    def _layout_overlay_mode(self):
+        self.overlay_mode = True
+        self._set_main_layout(show_setup=False)
+        self.apply_window_flags()
+
+    def _set_main_layout(self, show_setup):
+        widgets = [
+            self.title_label,
+            self.image_label,
+            self.cool_text_label,
+            self.settings_frame,
+            self.stats_frame,
+            self.cal_frame,
+            self.btn_frame,
+            self.status_label,
+        ]
+        for widget in widgets:
+            widget.pack_forget()
+
+        self.title_label.pack(pady=(8, 4))
+        self.image_label.pack(padx=10, pady=6)
+
+        if show_setup:
+            self.cool_text_label.pack(pady=(0, 8))
+            self.settings_frame.pack(fill="x", padx=10, pady=6)
+
+        self.stats_frame.pack(fill="x", padx=10, pady=6)
+        self.cal_frame.pack(pady=8)
+
+        if show_setup:
+            self.btn_frame.pack(pady=8)
+            self.status_label.pack(pady=(2, 8))
+
+    def _on_escape_key(self, _event):
+        if self.overlay_mode:
+            self.exit_overlay_mode()
+
+    def enter_overlay_mode(self):
+        self.apply_customization()
+        if not state.snapshot()["running"]:
+            self.start()
+        self.status_var.set("Overlay mode active (press Esc to return)")
+        self._layout_overlay_mode()
+
+    def exit_overlay_mode(self):
+        self.status_var.set("Tracking... go click osu! and play")
+        self._layout_setup_mode()
 
     def _add_labeled_entry(self, parent, label, variable):
         row = tk.Frame(parent)
@@ -376,7 +437,7 @@ class CalorieTrackerApp:
 
     def apply_window_flags(self):
         self.root.attributes("-topmost", self.always_on_top_var.get())
-        self.root.overrideredirect(self.borderless_var.get())
+        self.root.overrideredirect(self.borderless_var.get() or self.overlay_mode)
         self.root.attributes("-alpha", self.overlay_alpha_var.get())
 
     def apply_theme(self):

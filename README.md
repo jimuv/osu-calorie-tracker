@@ -21,9 +21,11 @@ python calorie.py
 
 ## Usage
 1. Launch the app.
-2. Press **Start**, switch to osu!, and play.
-3. Use **Customization** section to apply your own style and key mapping.
-4. Toggle **Always on top** to keep the overlay visible over other windows.
+2. Configure title, keys, colors, opacity, and image in the setup UI.
+3. Click **Enter Overlay** to switch into the final overlay view (background + key/calorie stats only).
+4. Press **Esc** to return to the setup UI at any time.
+5. Press **Start**, switch to osu!, and play (overlay mode auto-starts if needed).
+6. Toggle **Always on top** to keep the overlay visible over other windows.
 
 ## If keys are not counting
 - Make sure you pressed **Start**.
