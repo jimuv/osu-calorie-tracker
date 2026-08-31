@@ -1,58 +1,38 @@
 """
-osu! Calorie Tracker
-=====================
+osu! Calorie Tracker Overlay
+============================
 
-Tracks how many times you press Z and X (osu!'s standard hit keys)
-and converts that into an estimated calorie count.
-
-The key listener runs globally, so it keeps counting even while
-osu! (or any other window) is focused -- you don't need to click
-back into this app.
+Fun overlay that tracks osu!-style key presses globally and estimates calories.
 
 Install requirement:
     pip install pynput
 
 Run:
-    python osu_calorie_tracker.py
+    python calorie.py
 """
 
 import tkinter as tk
-from tkinter import ttk
+from tkinter import filedialog, messagebox
 import threading
 import time
 
 from pynput import keyboard
 
 
-# ============================================================
-# SETTINGS
-# ============================================================
-
-# Estimated calories burned per key press.
-# This is arbitrary/for-fun -- tweak it in the app itself
-# with the "cal per press" box, or change the default here.
 DEFAULT_CALORIES_PER_PRESS = 0.03
+DEFAULT_TRACKED_KEYS = {"z", "x"}
+UPDATE_INTERVAL_MS = 200
 
-# Which keys count as "hits"
-TRACKED_KEYS = {"z", "x"}
-
-UPDATE_INTERVAL_MS = 200  # how often the GUI refreshes
-
-
-# ============================================================
-# TRACKER STATE (shared between listener thread and GUI thread)
-# ============================================================
 
 class TrackerState:
-
     def __init__(self):
         self.lock = threading.Lock()
+        self.tracked_keys = set(DEFAULT_TRACKED_KEYS)
         self.reset()
 
     def reset(self):
         with self.lock:
-            self.z_count = 0
-            self.x_count = 0
+            self.key_counts = {}
             self.start_time = None
             self.elapsed_paused = 0.0
             self.running = False
@@ -69,18 +49,30 @@ class TrackerState:
                 self.elapsed_paused += time.time() - self.start_time
                 self.running = False
 
+    def set_tracked_keys(self, keys):
+        normalized = {k.strip().lower() for k in keys if k.strip()}
+        if not normalized:
+            normalized = set(DEFAULT_TRACKED_KEYS)
+
+        with self.lock:
+            self.tracked_keys = normalized
+            self.key_counts = {k: self.key_counts.get(k, 0) for k in self.tracked_keys}
+
+    def is_tracked_key(self, key_char):
+        with self.lock:
+            return key_char in self.tracked_keys
+
     def register_key(self, key_char):
         with self.lock:
-            if not self.running:
+            if not self.running or key_char not in self.tracked_keys:
                 return
-            if key_char == "z":
-                self.z_count += 1
-            elif key_char == "x":
-                self.x_count += 1
+            self.key_counts[key_char] = self.key_counts.get(key_char, 0) + 1
 
     def snapshot(self):
         with self.lock:
-            total = self.z_count + self.x_count
+            ordered_keys = sorted(self.tracked_keys)
+            counts = {k: self.key_counts.get(k, 0) for k in ordered_keys}
+            total = sum(counts.values())
 
             if self.running:
                 elapsed = self.elapsed_paused + (time.time() - self.start_time)
@@ -88,8 +80,7 @@ class TrackerState:
                 elapsed = self.elapsed_paused
 
             return {
-                "z": self.z_count,
-                "x": self.x_count,
+                "counts": counts,
                 "total": total,
                 "elapsed": elapsed,
                 "running": self.running,
@@ -99,17 +90,13 @@ class TrackerState:
 state = TrackerState()
 
 
-# ============================================================
-# GLOBAL KEY LISTENER
-# ============================================================
-
 def on_press(key):
     try:
         char = key.char.lower()
     except AttributeError:
         return
 
-    if char in TRACKED_KEYS:
+    if state.is_tracked_key(char):
         state.register_key(char)
 
 
@@ -118,138 +105,276 @@ listener.daemon = True
 listener.start()
 
 
-# ============================================================
-# GUI
-# ============================================================
-
 class CalorieTrackerApp:
-
     def __init__(self, root):
         self.root = root
-        self.root.title("osu! Calorie Tracker")
-        self.root.geometry("380x420")
+        self.root.title("osu! Calorie Tracker Overlay")
+        self.root.geometry("420x640")
         self.root.resizable(False, False)
+        self.root.attributes("-topmost", True)
+
+        self.title_text_var = tk.StringVar(value="🔥 osu! Calorie Tracker 🔥")
+        self.cal_per_press_var = tk.StringVar(value=str(DEFAULT_CALORIES_PER_PRESS))
+        self.keys_var = tk.StringVar(value=", ".join(sorted(DEFAULT_TRACKED_KEYS)))
+        self.image_path_var = tk.StringVar(value="")
+        self.overlay_alpha_var = tk.DoubleVar(value=0.95)
+        self.always_on_top_var = tk.BooleanVar(value=True)
+        self.borderless_var = tk.BooleanVar(value=False)
+        self.cool_text_var = tk.StringVar(value="Keep tapping and burn those pixels!")
+
+        self.bg_color_var = tk.StringVar(value="#15182a")
+        self.panel_color_var = tk.StringVar(value="#232946")
+        self.accent_color_var = tk.StringVar(value="#ff4d8d")
+        self.text_color_var = tk.StringVar(value="#f4f4ff")
+
+        self.overlay_image = None
+        self.key_labels = {}
 
         self._build_widgets()
+        self.apply_theme()
         self._tick()
 
-    # --------------------------------------------------------
-    # WIDGETS
-    # --------------------------------------------------------
-
     def _build_widgets(self):
+        self.main = tk.Frame(self.root, bd=2, relief="ridge")
+        self.main.pack(fill="both", expand=True, padx=8, pady=8)
 
-        pad = {"padx": 10, "pady": 6}
-
-        title = ttk.Label(
-            self.root,
-            text="osu! Calorie Tracker",
-            font=("Segoe UI", 16, "bold")
+        self.title_label = tk.Label(
+            self.main,
+            textvariable=self.title_text_var,
+            font=("Segoe UI", 16, "bold"),
         )
-        title.pack(pady=(15, 5))
+        self.title_label.pack(pady=(8, 4))
 
-        # ---- Calories per press setting ----
-
-        settings_frame = ttk.Frame(self.root)
-        settings_frame.pack(**pad)
-
-        ttk.Label(settings_frame, text="Calories per key press:").pack(side="left")
-
-        self.cal_per_press_var = tk.StringVar(
-            value=str(DEFAULT_CALORIES_PER_PRESS)
+        self.image_label = tk.Label(
+            self.main,
+            text="No anime image selected yet",
+            font=("Segoe UI", 10, "italic"),
+            width=42,
+            height=10,
+            relief="groove",
         )
-        cal_entry = ttk.Entry(
-            settings_frame,
-            textvariable=self.cal_per_press_var,
-            width=8
+        self.image_label.pack(padx=10, pady=6)
+
+        self.cool_text_label = tk.Label(
+            self.main,
+            textvariable=self.cool_text_var,
+            font=("Segoe UI", 10, "bold"),
+            wraplength=360,
+            justify="center",
         )
-        cal_entry.pack(side="left", padx=5)
+        self.cool_text_label.pack(pady=(0, 8))
 
-        # ---- Stats ----
+        settings = tk.LabelFrame(self.main, text="Customization")
+        settings.pack(fill="x", padx=10, pady=6)
 
-        stats_frame = ttk.LabelFrame(self.root, text="Session Stats")
-        stats_frame.pack(fill="x", **pad)
+        self._add_labeled_entry(settings, "Overlay title", self.title_text_var)
+        self._add_labeled_entry(settings, "Cool text", self.cool_text_var)
+        self._add_labeled_entry(settings, "Calories / key", self.cal_per_press_var)
+        self._add_labeled_entry(settings, "Tracked keys (comma)", self.keys_var)
+        self._add_labeled_entry(settings, "Image path", self.image_path_var)
 
-        self.z_label = self._make_stat_row(stats_frame, "Z presses:")
-        self.x_label = self._make_stat_row(stats_frame, "X presses:")
-        self.total_label = self._make_stat_row(stats_frame, "Total presses:")
-        self.time_label = self._make_stat_row(stats_frame, "Session time:")
-        self.rate_label = self._make_stat_row(stats_frame, "Presses / min:")
+        image_controls = tk.Frame(settings)
+        image_controls.pack(fill="x", padx=6, pady=3)
+        tk.Button(image_controls, text="Browse Image", command=self.browse_image).pack(
+            side="left"
+        )
+        tk.Button(image_controls, text="Load Image", command=self.load_image).pack(
+            side="left", padx=6
+        )
 
-        # ---- Calories display ----
+        color_frame = tk.Frame(settings)
+        color_frame.pack(fill="x", padx=6, pady=4)
+        self._add_color_input(color_frame, "BG", self.bg_color_var, 0)
+        self._add_color_input(color_frame, "Panel", self.panel_color_var, 1)
+        self._add_color_input(color_frame, "Accent", self.accent_color_var, 2)
+        self._add_color_input(color_frame, "Text", self.text_color_var, 3)
 
-        cal_frame = ttk.Frame(self.root)
-        cal_frame.pack(pady=15)
+        toggle_frame = tk.Frame(settings)
+        toggle_frame.pack(fill="x", padx=6, pady=4)
+        tk.Checkbutton(
+            toggle_frame,
+            text="Always on top",
+            variable=self.always_on_top_var,
+            command=self.apply_window_flags,
+        ).pack(side="left")
+        tk.Checkbutton(
+            toggle_frame,
+            text="Borderless overlay",
+            variable=self.borderless_var,
+            command=self.apply_window_flags,
+        ).pack(side="left", padx=8)
 
-        ttk.Label(
+        alpha_frame = tk.Frame(settings)
+        alpha_frame.pack(fill="x", padx=6, pady=4)
+        tk.Label(alpha_frame, text="Overlay opacity").pack(side="left")
+        tk.Scale(
+            alpha_frame,
+            from_=0.35,
+            to=1.0,
+            resolution=0.05,
+            orient="horizontal",
+            variable=self.overlay_alpha_var,
+            command=lambda _x: self.apply_window_flags(),
+            length=180,
+        ).pack(side="left", padx=8)
+
+        tk.Button(
+            settings,
+            text="Apply customization",
+            command=self.apply_customization,
+        ).pack(pady=5)
+
+        stats = tk.LabelFrame(self.main, text="Session Stats")
+        stats.pack(fill="x", padx=10, pady=6)
+
+        self.keys_stat_label = self._make_stat_row(stats, "Tracked keys")
+        self.total_label = self._make_stat_row(stats, "Total presses")
+        self.time_label = self._make_stat_row(stats, "Session time")
+        self.rate_label = self._make_stat_row(stats, "Presses / min")
+
+        cal_frame = tk.Frame(self.main)
+        cal_frame.pack(pady=8)
+
+        self.cal_title = tk.Label(
             cal_frame,
             text="Calories burned",
-            font=("Segoe UI", 11)
-        ).pack()
+            font=("Segoe UI", 11),
+        )
+        self.cal_title.pack()
 
         self.calories_var = tk.StringVar(value="0.00")
-        ttk.Label(
+        self.calories_label = tk.Label(
             cal_frame,
             textvariable=self.calories_var,
-            font=("Segoe UI", 28, "bold")
-        ).pack()
-
-        # ---- Buttons ----
-
-        btn_frame = ttk.Frame(self.root)
-        btn_frame.pack(pady=10)
-
-        self.start_btn = ttk.Button(
-            btn_frame, text="Start", command=self.start
+            font=("Segoe UI", 30, "bold"),
         )
-        self.start_btn.grid(row=0, column=0, padx=5)
+        self.calories_label.pack()
 
-        self.stop_btn = ttk.Button(
-            btn_frame, text="Pause", command=self.stop
-        )
-        self.stop_btn.grid(row=0, column=1, padx=5)
-
-        self.reset_btn = ttk.Button(
-            btn_frame, text="Reset", command=self.reset
-        )
-        self.reset_btn.grid(row=0, column=2, padx=5)
-
-        # ---- Status ----
+        btn_frame = tk.Frame(self.main)
+        btn_frame.pack(pady=8)
+        tk.Button(btn_frame, text="Start", command=self.start).grid(row=0, column=0, padx=4)
+        tk.Button(btn_frame, text="Pause", command=self.stop).grid(row=0, column=1, padx=4)
+        tk.Button(btn_frame, text="Reset", command=self.reset).grid(row=0, column=2, padx=4)
 
         self.status_var = tk.StringVar(value="Stopped")
-        self.status_label = ttk.Label(
-            self.root,
+        self.status_label = tk.Label(
+            self.main,
             textvariable=self.status_var,
-            font=("Segoe UI", 10, "italic")
+            font=("Segoe UI", 10, "italic"),
         )
-        self.status_label.pack(pady=(5, 0))
+        self.status_label.pack(pady=(2, 8))
 
-        note = ttk.Label(
-            self.root,
-            text="Tracks Z / X presses even while osu! is focused.",
-            font=("Segoe UI", 8),
-            foreground="gray"
-        )
-        note.pack(pady=(10, 0))
+    def _add_labeled_entry(self, parent, label, variable):
+        row = tk.Frame(parent)
+        row.pack(fill="x", padx=6, pady=3)
+        tk.Label(row, text=label, width=18, anchor="w").pack(side="left")
+        tk.Entry(row, textvariable=variable).pack(side="left", fill="x", expand=True)
 
-    def _make_stat_row(self, parent, label_text):
-        row = ttk.Frame(parent)
+    def _add_color_input(self, parent, label, variable, column):
+        frame = tk.Frame(parent)
+        frame.grid(row=0, column=column, padx=3)
+        tk.Label(frame, text=label).pack()
+        tk.Entry(frame, textvariable=variable, width=8).pack()
+
+    def _make_stat_row(self, parent, name):
+        row = tk.Frame(parent)
         row.pack(fill="x", padx=8, pady=2)
+        tk.Label(row, text=f"{name}:", width=16, anchor="w").pack(side="left")
+        var = tk.StringVar(value="0")
+        tk.Label(row, textvariable=var, anchor="e").pack(side="right")
+        return var
 
-        ttk.Label(row, text=label_text, width=16, anchor="w").pack(side="left")
+    def browse_image(self):
+        selected = filedialog.askopenfilename(
+            title="Select anime image",
+            filetypes=[
+                ("Image files", "*.png *.gif *.ppm *.pgm"),
+                ("PNG", "*.png"),
+                ("GIF", "*.gif"),
+                ("All files", "*.*"),
+            ],
+        )
+        if selected:
+            self.image_path_var.set(selected)
 
-        value_var = tk.StringVar(value="0")
-        ttk.Label(row, textvariable=value_var, anchor="e").pack(side="right")
+    def load_image(self):
+        path = self.image_path_var.get().strip()
+        if not path:
+            self.overlay_image = None
+            self.image_label.config(image="", text="No anime image selected yet")
+            return
 
-        return value_var
+        try:
+            image = tk.PhotoImage(file=path)
+            self.overlay_image = image
+            self.image_label.config(image=image, text="")
+        except tk.TclError as exc:
+            messagebox.showerror(
+                "Image load failed",
+                f"Couldn't load this image.\nUse PNG/GIF/PPM/PGM.\n\n{exc}",
+            )
 
-    # --------------------------------------------------------
-    # ACTIONS
-    # --------------------------------------------------------
+    def apply_window_flags(self):
+        self.root.attributes("-topmost", self.always_on_top_var.get())
+        self.root.overrideredirect(self.borderless_var.get())
+        self.root.attributes("-alpha", self.overlay_alpha_var.get())
+
+    def apply_theme(self):
+        bg = self.bg_color_var.get().strip() or "#15182a"
+        panel = self.panel_color_var.get().strip() or "#232946"
+        accent = self.accent_color_var.get().strip() or "#ff4d8d"
+        text = self.text_color_var.get().strip() or "#f4f4ff"
+
+        self.root.configure(bg=bg)
+        self.main.configure(bg=panel, highlightbackground=accent, highlightcolor=accent)
+
+        for widget in self.main.winfo_children():
+            if isinstance(widget, tk.LabelFrame):
+                widget.configure(bg=panel, fg=text)
+                for child in widget.winfo_children():
+                    self._apply_widget_colors(child, panel, text, accent)
+            else:
+                self._apply_widget_colors(widget, panel, text, accent)
+
+        self.title_label.configure(fg=accent)
+        self.calories_label.configure(fg=accent)
+
+    def _apply_widget_colors(self, widget, bg, text, accent):
+        if isinstance(widget, tk.Frame):
+            widget.configure(bg=bg)
+            for child in widget.winfo_children():
+                self._apply_widget_colors(child, bg, text, accent)
+            return
+
+        if isinstance(widget, tk.Label):
+            widget.configure(bg=bg, fg=text)
+        elif isinstance(widget, tk.Entry):
+            widget.configure(
+                bg="#0d1020", fg=text, insertbackground=text, highlightbackground=accent
+            )
+        elif isinstance(widget, tk.Button):
+            widget.configure(bg=accent, fg="#ffffff", activebackground="#ff7aad")
+        elif isinstance(widget, tk.Checkbutton):
+            widget.configure(
+                bg=bg,
+                fg=text,
+                selectcolor="#0d1020",
+                activebackground=bg,
+                activeforeground=text,
+            )
+        elif isinstance(widget, tk.Scale):
+            widget.configure(bg=bg, fg=text, troughcolor="#0d1020", highlightbackground=bg)
+
+    def apply_customization(self):
+        key_names = [part.strip() for part in self.keys_var.get().split(",")]
+        state.set_tracked_keys(key_names)
+        self.apply_window_flags()
+        self.apply_theme()
+        self.load_image()
 
     def start(self):
         state.start()
-        self.status_var.set("Tracking... (switch to osu! now)")
+        self.status_var.set("Tracking... go click osu! and play")
 
     def stop(self):
         state.stop()
@@ -260,7 +385,7 @@ class CalorieTrackerApp:
         state.reset()
         if was_running:
             state.start()
-            self.status_var.set("Tracking... (switch to osu! now)")
+            self.status_var.set("Tracking... go click osu! and play")
         else:
             self.status_var.set("Stopped")
 
@@ -273,36 +398,27 @@ class CalorieTrackerApp:
         except ValueError:
             return DEFAULT_CALORIES_PER_PRESS
 
-    # --------------------------------------------------------
-    # LIVE UPDATE LOOP
-    # --------------------------------------------------------
-
     def _tick(self):
         snap = state.snapshot()
 
-        self.z_label.set(str(snap["z"]))
-        self.x_label.set(str(snap["x"]))
+        keys_summary = ", ".join(
+            f"{key.upper()}={count}" for key, count in snap["counts"].items()
+        )
+        self.keys_stat_label.set(keys_summary or "None")
         self.total_label.set(str(snap["total"]))
 
         elapsed = snap["elapsed"]
         minutes, seconds = divmod(int(elapsed), 60)
         self.time_label.set(f"{minutes:02d}:{seconds:02d}")
 
-        presses_per_min = (
-            (snap["total"] / elapsed * 60) if elapsed > 0 else 0
-        )
+        presses_per_min = (snap["total"] / elapsed * 60) if elapsed > 0 else 0
         self.rate_label.set(f"{presses_per_min:.1f}")
 
-        cal_per_press = self._get_cal_per_press()
-        calories = snap["total"] * cal_per_press
+        calories = snap["total"] * self._get_cal_per_press()
         self.calories_var.set(f"{calories:.2f}")
 
         self.root.after(UPDATE_INTERVAL_MS, self._tick)
 
-
-# ============================================================
-# MAIN
-# ============================================================
 
 if __name__ == "__main__":
     root = tk.Tk()
