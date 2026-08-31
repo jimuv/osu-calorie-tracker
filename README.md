@@ -24,3 +24,8 @@ python calorie.py
 2. Press **Start**, switch to osu!, and play.
 3. Use **Customization** section to apply your own style and key mapping.
 4. Toggle **Always on top** to keep the overlay visible over other windows.
+
+## If keys are not counting
+- Make sure you pressed **Start**.
+- If you changed tracked keys, click **Apply customization** after editing them.
+- Run osu! and this app with the same privilege level (for example, both normal or both admin).

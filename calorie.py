@@ -33,6 +33,7 @@ class TrackerState:
     def reset(self):
         with self.lock:
             self.key_counts = {}
+            self.pressed_keys = set()
             self.start_time = None
             self.elapsed_paused = 0.0
             self.running = False
@@ -57,6 +58,7 @@ class TrackerState:
         with self.lock:
             self.tracked_keys = normalized
             self.key_counts = {k: self.key_counts.get(k, 0) for k in self.tracked_keys}
+            self.pressed_keys = {k for k in self.pressed_keys if k in self.tracked_keys}
 
     def is_tracked_key(self, key_char):
         with self.lock:
@@ -67,6 +69,24 @@ class TrackerState:
             if not self.running or key_char not in self.tracked_keys:
                 return
             self.key_counts[key_char] = self.key_counts.get(key_char, 0) + 1
+
+    def mark_pressed(self, key_char):
+        with self.lock:
+            if key_char not in self.tracked_keys:
+                return False
+            if key_char in self.pressed_keys:
+                return False
+            self.pressed_keys.add(key_char)
+            return True
+
+    def mark_released(self, key_char):
+        with self.lock:
+            if key_char not in self.tracked_keys:
+                return False
+            if key_char in self.pressed_keys:
+                self.pressed_keys.remove(key_char)
+                return False
+            return True
 
     def snapshot(self):
         with self.lock:
@@ -90,17 +110,39 @@ class TrackerState:
 state = TrackerState()
 
 
-def on_press(key):
+def normalize_key(key):
     try:
-        char = key.char.lower()
+        if key.char:
+            return key.char.lower()
     except AttributeError:
+        pass
+
+    key_name = getattr(key, "name", None)
+    if key_name:
+        return key_name.lower()
+    return None
+
+
+def on_press(key):
+    normalized = normalize_key(key)
+    if not normalized or not state.is_tracked_key(normalized):
         return
 
-    if state.is_tracked_key(char):
-        state.register_key(char)
+    if state.mark_pressed(normalized):
+        state.register_key(normalized)
 
 
-listener = keyboard.Listener(on_press=on_press)
+def on_release(key):
+    normalized = normalize_key(key)
+    if not normalized or not state.is_tracked_key(normalized):
+        return
+
+    # Fallback path for systems/games where keydown hooks are occasionally missed.
+    if state.mark_released(normalized):
+        state.register_key(normalized)
+
+
+listener = keyboard.Listener(on_press=on_press, on_release=on_release)
 listener.daemon = True
 listener.start()
 
