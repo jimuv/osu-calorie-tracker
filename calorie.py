@@ -1,8 +1,8 @@
 """
-osu! Calorie Tracker Overlay
-============================
+Rhythm Calorie Tracker Overlay
+==============================
 
-Fun overlay that tracks osu!-style key presses globally and estimates calories.
+Fun overlay that tracks rhythm-game key presses globally and estimates calories.
 
 Install requirement:
     pip install pynput
@@ -15,6 +15,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 import threading
 import time
+import os
 
 from pynput import keyboard
 
@@ -33,7 +34,6 @@ class TrackerState:
     def reset(self):
         with self.lock:
             self.key_counts = {}
-            self.pressed_keys = set()
             self.start_time = None
             self.elapsed_paused = 0.0
             self.running = False
@@ -58,7 +58,6 @@ class TrackerState:
         with self.lock:
             self.tracked_keys = normalized
             self.key_counts = {k: self.key_counts.get(k, 0) for k in self.tracked_keys}
-            self.pressed_keys = {k for k in self.pressed_keys if k in self.tracked_keys}
 
     def is_tracked_key(self, key_char):
         with self.lock:
@@ -69,24 +68,6 @@ class TrackerState:
             if not self.running or key_char not in self.tracked_keys:
                 return
             self.key_counts[key_char] = self.key_counts.get(key_char, 0) + 1
-
-    def mark_pressed(self, key_char):
-        with self.lock:
-            if key_char not in self.tracked_keys:
-                return False
-            if key_char in self.pressed_keys:
-                return False
-            self.pressed_keys.add(key_char)
-            return True
-
-    def mark_released(self, key_char):
-        with self.lock:
-            if key_char not in self.tracked_keys:
-                return False
-            if key_char in self.pressed_keys:
-                self.pressed_keys.remove(key_char)
-                return False
-            return True
 
     def snapshot(self):
         with self.lock:
@@ -128,21 +109,10 @@ def on_press(key):
     if not normalized or not state.is_tracked_key(normalized):
         return
 
-    if state.mark_pressed(normalized):
-        state.register_key(normalized)
+    state.register_key(normalized)
 
 
-def on_release(key):
-    normalized = normalize_key(key)
-    if not normalized or not state.is_tracked_key(normalized):
-        return
-
-    # Fallback path for systems/games where keydown hooks are occasionally missed.
-    if state.mark_released(normalized):
-        state.register_key(normalized)
-
-
-listener = keyboard.Listener(on_press=on_press, on_release=on_release)
+listener = keyboard.Listener(on_press=on_press)
 listener.daemon = True
 listener.start()
 
@@ -150,11 +120,11 @@ listener.start()
 class CalorieTrackerApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("osu! Calorie Tracker Overlay")
+        self.root.title("Rhythm Calorie Tracker Overlay")
         self._configure_initial_window()
         self.root.attributes("-topmost", True)
 
-        self.title_text_var = tk.StringVar(value="🔥 osu! Calorie Tracker 🔥")
+        self.title_text_var = tk.StringVar(value="🔥 Rhythm Calorie Tracker 🔥")
         self.cal_per_press_var = tk.StringVar(value=str(DEFAULT_CALORIES_PER_PRESS))
         self.keys_var = tk.StringVar(value=", ".join(sorted(DEFAULT_TRACKED_KEYS)))
         self.image_path_var = tk.StringVar(value="")
@@ -162,6 +132,7 @@ class CalorieTrackerApp:
         self.always_on_top_var = tk.BooleanVar(value=True)
         self.borderless_var = tk.BooleanVar(value=False)
         self.cool_text_var = tk.StringVar(value="Keep tapping and burn those pixels!")
+        self.image_display_var = tk.StringVar(value="None selected")
 
         self.bg_color_var = tk.StringVar(value="#15182a")
         self.panel_color_var = tk.StringVar(value="#232946")
@@ -210,10 +181,10 @@ class CalorieTrackerApp:
 
         self.image_label = tk.Label(
             self.main,
-            text="No anime image selected yet",
+            text="No image selected yet",
             font=("Segoe UI", 10, "italic"),
             width=42,
-            height=10,
+            height=6,
             relief="groove",
         )
         self.image_label.pack(padx=10, pady=6)
@@ -234,7 +205,7 @@ class CalorieTrackerApp:
         self._add_labeled_entry(self.settings_frame, "Cool text", self.cool_text_var)
         self._add_labeled_entry(self.settings_frame, "Calories / key", self.cal_per_press_var)
         self._add_labeled_entry(self.settings_frame, "Tracked keys (comma)", self.keys_var)
-        self._add_labeled_entry(self.settings_frame, "Image path", self.image_path_var)
+        self._add_image_row(self.settings_frame)
 
         image_controls = tk.Frame(self.settings_frame)
         image_controls.pack(fill="x", padx=6, pady=3)
@@ -320,7 +291,7 @@ class CalorieTrackerApp:
         tk.Button(self.btn_frame, text="Reset", command=self.reset).grid(row=0, column=2, padx=4)
         tk.Button(
             self.btn_frame,
-            text="Enter Overlay",
+            text="Show Overlay",
             command=self.enter_overlay_mode,
         ).grid(row=0, column=3, padx=4)
 
@@ -357,6 +328,9 @@ class CalorieTrackerApp:
             widget.pack_forget()
 
         self.title_label.pack(pady=(8, 4))
+        if show_setup:
+            self.btn_frame.pack(pady=6)
+            self.status_label.pack(pady=(0, 4))
         self.image_label.pack(padx=10, pady=6)
 
         if show_setup:
@@ -365,10 +339,6 @@ class CalorieTrackerApp:
 
         self.stats_frame.pack(fill="x", padx=10, pady=6)
         self.cal_frame.pack(pady=8)
-
-        if show_setup:
-            self.btn_frame.pack(pady=8)
-            self.status_label.pack(pady=(2, 8))
 
     def _on_escape_key(self, _event):
         if self.overlay_mode:
@@ -382,7 +352,7 @@ class CalorieTrackerApp:
         self._layout_overlay_mode()
 
     def exit_overlay_mode(self):
-        self.status_var.set("Tracking... go click osu! and play")
+        self.status_var.set("Tracking... switch to your rhythm game and play")
         self._layout_setup_mode()
 
     def _add_labeled_entry(self, parent, label, variable):
@@ -390,6 +360,18 @@ class CalorieTrackerApp:
         row.pack(fill="x", padx=6, pady=3)
         tk.Label(row, text=label, width=18, anchor="w").pack(side="left")
         tk.Entry(row, textvariable=variable).pack(side="left", fill="x", expand=True)
+
+    def _add_image_row(self, parent):
+        row = tk.Frame(parent)
+        row.pack(fill="x", padx=6, pady=3)
+        tk.Label(row, text="Image file", width=18, anchor="w").pack(side="left")
+        tk.Label(
+            row,
+            textvariable=self.image_display_var,
+            anchor="w",
+            justify="left",
+            wraplength=210,
+        ).pack(side="left", fill="x", expand=True)
 
     def _add_color_input(self, parent, label, variable, column):
         frame = tk.Frame(parent)
@@ -407,7 +389,7 @@ class CalorieTrackerApp:
 
     def browse_image(self):
         selected = filedialog.askopenfilename(
-            title="Select anime image",
+            title="Select image",
             filetypes=[
                 ("Image files", "*.png *.gif *.ppm *.pgm"),
                 ("PNG", "*.png"),
@@ -417,23 +399,27 @@ class CalorieTrackerApp:
         )
         if selected:
             self.image_path_var.set(selected)
+            self.image_display_var.set(os.path.basename(selected))
 
     def load_image(self):
         path = self.image_path_var.get().strip()
         if not path:
             self.overlay_image = None
-            self.image_label.config(image="", text="No anime image selected yet")
+            self.image_display_var.set("None selected")
+            self.image_label.config(image="", text="No image selected yet")
             return
 
         try:
             image = tk.PhotoImage(file=path)
             self.overlay_image = image
+            self.image_display_var.set(os.path.basename(path))
             self.image_label.config(image=image, text="")
-        except tk.TclError as exc:
+        except tk.TclError:
             messagebox.showerror(
                 "Image load failed",
-                f"Couldn't load this image.\nUse PNG/GIF/PPM/PGM.\n\n{exc}",
+                "Couldn't load that image.\nUse PNG/GIF/PPM/PGM and try another file.",
             )
+            self.status_var.set("Image load failed. Try a different PNG/GIF/PPM/PGM file.")
 
     def apply_window_flags(self):
         self.root.attributes("-topmost", self.always_on_top_var.get())
@@ -495,7 +481,7 @@ class CalorieTrackerApp:
 
     def start(self):
         state.start()
-        self.status_var.set("Tracking... go click osu! and play")
+        self.status_var.set("Tracking... switch to your rhythm game and play")
 
     def stop(self):
         state.stop()
@@ -506,7 +492,7 @@ class CalorieTrackerApp:
         state.reset()
         if was_running:
             state.start()
-            self.status_var.set("Tracking... go click osu! and play")
+            self.status_var.set("Tracking... switch to your rhythm game and play")
         else:
             self.status_var.set("Stopped")
 
