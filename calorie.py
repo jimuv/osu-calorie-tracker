@@ -109,8 +109,7 @@ class CalorieTrackerApp:
     def __init__(self, root):
         self.root = root
         self.root.title("osu! Calorie Tracker Overlay")
-        self.root.geometry("420x640")
-        self.root.resizable(False, False)
+        self._configure_initial_window()
         self.root.attributes("-topmost", True)
 
         self.title_text_var = tk.StringVar(value="🔥 osu! Calorie Tracker 🔥")
@@ -133,6 +132,25 @@ class CalorieTrackerApp:
         self._build_widgets()
         self.apply_theme()
         self._tick()
+
+    def _configure_initial_window(self):
+        preferred_width = 420
+        preferred_height = 640
+        min_width = 360
+        min_height = 420
+        margin = 80
+
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+
+        width = min(preferred_width, max(min_width, screen_width - margin))
+        height = min(preferred_height, max(min_height, screen_height - margin))
+        x = max((screen_width - width) // 2, 0)
+        y = max((screen_height - height) // 2, 0)
+
+        self.root.geometry(f"{width}x{height}+{x}+{y}")
+        self.root.minsize(min(min_width, width), min(min_height, height))
+        self.root.resizable(True, True)
 
     def _build_widgets(self):
         self.main = tk.Frame(self.root, bd=2, relief="ridge")
